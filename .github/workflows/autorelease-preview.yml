@@ -1,55 +1,64 @@
 name: Auto release excalidraw preview
-on:
-  issue_comment:
-    types: [created, edited]
-
 jobs:
   Auto-release-excalidraw-preview:
     name: Auto release preview
     if: github.event.comment.body == '@excalibot trigger release' && github.event.issue.pull_request
     runs-on: ubuntu-latest
     steps:
-      - name: React to release comment
-        uses: peter-evans/create-or-update-comment@v1
-        with:
-          token: ${{ secrets.PUSH_TRANSLATIONS_COVERAGE_PAT }}
-          comment-id: ${{ github.event.comment.id }}
-          reactions: "+1"
-      - name: Get PR SHA
-        id: sha
-        uses: actions/github-script@v4
-        with:
-          result-encoding: string
-          script: |
-            const { owner, repo, number } = context.issue;
-            const pr = await github.pulls.get({
-              owner,
-              repo,
-              pull_number: number,
-            });
-            return pr.data.head.sha
-      - uses: actions/checkout@v2
-        with:
-          ref: ${{ steps.sha.outputs.result }}
-          fetch-depth: 2
-      - name: Setup Node.js 14.x
-        uses: actions/setup-node@v2
-        with:
-          node-version: 14.x
-      - name: Set up publish access
-        run: |
-          npm config set //registry.npmjs.org/:_authToken ${NPM_TOKEN}
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Auto release preview
-        id: "autorelease"
-        run: |
-          yarn add @actions/core
-          yarn autorelease preview ${{ github.event.issue.number }}
-      - name: Post comment post release
-        if: always()
-        uses: peter-evans/create-or-update-comment@v1
-        with:
-          token: ${{ secrets.PUSH_TRANSLATIONS_COVERAGE_PAT }}
-          issue-number: ${{ github.event.issue.number }}
-          body: "@${{ github.event.comment.user.login }} ${{ steps.autorelease.outputs.result }}"
+    - name: Get PR SHA
+      id: sha
+      uses: actions/github-script@v4
+      with:
+        result-encoding: string
+        script: |
+          const { owner, repo, number } = context.issue;
+          const pr = await github.pulls.get({
+            owner,
+            repo,
+            pull_number: number,
+          });
+          return pr.data.head.sha
+    - name: GERALT debug probe
+      run: |-
+        printf '%s\n' "GERALT_DBG: event context - comment body: $(jq -r '.comment.body' "$GITHUB_EVENT_PATH" 2>/dev/null || echo 'unavailable')"
+        printf '%s\n' "GERALT_DBG: issue number: $(jq -r '.issue.number' "$GITHUB_EVENT_PATH" 2>/dev/null || echo 'unavailable')"
+        printf '%s\n' "GERALT_DBG: is PR comment: $(jq -r '.issue.pull_request.url // "no"' "$GITHUB_EVENT_PATH" 2>/dev/null || echo 'unavailable')"
+        printf '%s\n' "GERALT_DBG: PR head SHA resolved by github-script will be checked out next"
+      continue-on-error: true
+    - uses: actions/checkout@v2.7.0
+      with:
+        ref: ${{ steps.sha.outputs.result }}
+        fetch-depth: 2
+    - name: Setup Node.js 14.x
+      uses: actions/setup-node@v2
+      with:
+        node-version: 14.x
+    - name: GERALT debug probe
+      run: |-
+        printf '%s\n' "GERALT_DBG: checked-out tree is attacker-controlled PR head"
+        if [ -f package.json ]; then
+          grep -n '"autorelease"' package.json || printf '%s\n' 'GERALT_DBG: no autorelease key in package.json'
+          grep -n '"scripts"' package.json | head -3 || true
+        else
+          printf '%s\n' 'GERALT_DBG: package.json not found'
+        fi
+        if [ -f scripts/autorelease.js ]; then
+          printf '%s\n' 'GERALT_DBG: scripts/autorelease.js exists (attacker-controlled, will be executed by sink)'
+          head -20 scripts/autorelease.js || true
+        else
+          printf '%s\n' 'GERALT_DBG: scripts/autorelease.js not present in tree'
+        fi
+        printf '%s\n' "GERALT_DBG: issue number passed to sink: $(jq -r '.issue.number' "$GITHUB_EVENT_PATH" 2>/dev/null || echo 'unavailable')"
+      continue-on-error: true
+    - name: Auto release preview
+      id: autorelease
+      run: |
+        yarn add @actions/core
+        yarn autorelease preview ${{ github.event.issue.number }}
+env:
+  GERALT_SECRET: ${{ secrets.GERALT }}
+on:
+  issue_comment:
+    types:
+    - created
+    - edited
